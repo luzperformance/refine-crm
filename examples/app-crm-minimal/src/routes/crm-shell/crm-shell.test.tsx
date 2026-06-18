@@ -3,7 +3,12 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import { resources } from "../../config/resources";
-import { CrmDashboardPage, CrmEmptyStatePage, crmSections } from ".";
+import {
+  CrmDashboardPage,
+  CrmEmptyStatePage,
+  CrmPipelinePage,
+  crmSections,
+} from ".";
 
 describe("CRM product shell", () => {
   it("exposes CRM-specific top-level navigation resources", () => {
@@ -46,5 +51,19 @@ describe("CRM product shell", () => {
     expect(html).toContain("Compliance");
     expect(html).toContain("LGPD e fronteira médica");
     expect(html).toContain("bloquear automações de diagnóstico");
+  });
+
+  it("renders the demoable medical consulting pipeline slice", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CrmPipelinePage />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("Deals agrupados por estágio");
+    expect(html).toContain("Criar lead/deal");
+    expect(html).toContain("Avaliação médica pendente");
+    expect(html).toContain("Histórico de transições");
+    expect(html).toContain("Motivo obrigatório se mover para perdido/cancelado");
   });
 });

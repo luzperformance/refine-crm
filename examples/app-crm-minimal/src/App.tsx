@@ -18,6 +18,7 @@ import { authProvider, dataProvider, liveProvider } from "@/providers";
 import {
   CrmDashboardPage,
   CrmEmptyStatePage,
+  CrmPipelinePage,
   LoginPage,
 } from "@/routes";
 
@@ -98,7 +99,7 @@ const App = () => {
                   />
                   <Route
                     path="/pipeline"
-                    element={<CrmEmptyStatePage sectionKey="pipeline" />}
+                    element={<CrmPipelinePage />}
                   />
                   <Route
                     path="/contracts"

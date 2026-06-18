@@ -7,7 +7,9 @@ import {
   createLeadWithAttribution,
   dealStages,
   lifecycleStages,
+  listPipelineDeals,
   markContractsDueForRenewal,
+  moveDealThroughPipeline,
   moveLeadToDeal,
   recordAttributionTouch,
 } from ".";
@@ -99,7 +101,8 @@ describe("CRM lead → deal → contract domain model", () => {
     });
     const consent = repository.createConsent({
       contactId: contact.id,
-      purpose: "Contato comercial e acompanhamento operacional LGPD",
+      purpose: "marketing",
+      source: "landing-page-lgpd-checkbox",
       grantedAt: "2026-06-18T00:00:00.000Z",
     });
     const auditLog = repository.createAuditLog({
@@ -127,6 +130,218 @@ describe("CRM lead → deal → contract domain model", () => {
     expect(repository.getTask(task.id)).toMatchObject(task);
     expect(repository.getConsent(consent.id)).toMatchObject(consent);
     expect(repository.getAuditLog(auditLog.id)).toMatchObject(auditLog);
+  });
+
+  it("stores LGPD consent records with purpose, source, timestamp, and status", () => {
+    const repository = createInMemoryCrmRepository({
+      clock: () => new Date("2026-06-18T10:00:00.000Z"),
+    });
+    const contact = repository.createContact({
+      fullName: "Lead com consentimento LGPD",
+      email: "lgpd@example.com",
+    });
+
+    const consent = repository.createConsent({
+      contactId: contact.id,
+      purpose: "marketing",
+      source: "formulario-blog",
+      decidedAt: "2026-06-18T09:45:00.000Z",
+    });
+
+    expect(consent).toMatchObject({
+      contactId: contact.id,
+      purpose: "marketing",
+      source: "formulario-blog",
+      decidedAt: "2026-06-18T09:45:00.000Z",
+      status: "granted",
+      grantedAt: "2026-06-18T09:45:00.000Z",
+    });
+    expect(repository.listAuditLogs()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "consent.created",
+          entityType: "consents",
+          entityId: consent.id,
+          contactId: contact.id,
+          metadata: {
+            purpose: "marketing",
+            source: "formulario-blog",
+            status: "granted",
+          },
+        }),
+      ]),
+    );
+  });
+
+  it("blocks marketing communication for opt-out and do-not-contact contacts", () => {
+    const repository = createInMemoryCrmRepository({
+      clock: () => new Date("2026-06-18T10:00:00.000Z"),
+    });
+    const marketingContact = repository.createContact({
+      fullName: "Lead com marketing permitido",
+      email: "marketing@example.com",
+    });
+    repository.createConsent({
+      contactId: marketingContact.id,
+      purpose: "marketing",
+      source: "whatsapp-opt-in",
+    });
+
+    expect(
+      repository.canSendMarketingCommunication(marketingContact.id),
+    ).toBe(true);
+
+    const optedOut = repository.markMarketingOptOut(marketingContact.id, {
+      actorId: "dr-vinicius",
+      source: "pedido-whatsapp",
+      changedAt: "2026-06-18T10:05:00.000Z",
+    });
+
+    expect(optedOut.communicationPreferences).toMatchObject({
+      marketingOptOut: true,
+      marketingOptedOutAt: "2026-06-18T10:05:00.000Z",
+    });
+    expect(
+      repository.canSendMarketingCommunication(marketingContact.id),
+    ).toBe(false);
+
+    const operationalPaused = repository.setOperationalCommunicationPermission(
+      marketingContact.id,
+      false,
+      {
+        actorId: "dr-vinicius",
+        source: "preferencia-do-lead",
+        changedAt: "2026-06-18T10:06:00.000Z",
+      },
+    );
+
+    expect(operationalPaused.communicationPreferences).toMatchObject({
+      operationalCommunicationAllowed: false,
+      operationalCommunicationUpdatedAt: "2026-06-18T10:06:00.000Z",
+    });
+    expect(
+      repository.canSendOperationalCommunication(marketingContact.id),
+    ).toBe(false);
+
+    const doNotContactLead = repository.createContact({
+      fullName: "Lead bloqueado para contato",
+      email: "dnc@example.com",
+    });
+    repository.createConsent({
+      contactId: doNotContactLead.id,
+      purpose: "marketing",
+      source: "landing-page",
+    });
+
+    const blocked = repository.markDoNotContact(doNotContactLead.id, {
+      actorId: "dr-vinicius",
+      source: "pedido-explicito",
+      changedAt: "2026-06-18T10:10:00.000Z",
+    });
+
+    expect(blocked.communicationPreferences).toMatchObject({
+      doNotContact: true,
+      doNotContactAt: "2026-06-18T10:10:00.000Z",
+    });
+    expect(repository.getContact(doNotContactLead.id)?.lifecycleStage).toBe(
+      "do_not_contact",
+    );
+    expect(
+      repository.canSendMarketingCommunication(doNotContactLead.id),
+    ).toBe(false);
+    expect(
+      repository.canSendOperationalCommunication(doNotContactLead.id),
+    ).toBe(false);
+
+    expect(repository.listAuditLogs()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actorId: "dr-vinicius",
+          action: "communication_preferences.changed",
+          entityType: "contacts",
+          entityId: marketingContact.id,
+          contactId: marketingContact.id,
+          from: "false",
+          to: "true",
+          metadata: {
+            preference: "marketingOptOut",
+            source: "pedido-whatsapp",
+          },
+        }),
+        expect.objectContaining({
+          actorId: "dr-vinicius",
+          action: "communication_preferences.changed",
+          entityType: "contacts",
+          entityId: doNotContactLead.id,
+          contactId: doNotContactLead.id,
+          from: "false",
+          to: "true",
+          metadata: {
+            preference: "doNotContact",
+            source: "pedido-explicito",
+          },
+        }),
+        expect.objectContaining({
+          actorId: "dr-vinicius",
+          action: "communication_preferences.changed",
+          entityType: "contacts",
+          entityId: marketingContact.id,
+          contactId: marketingContact.id,
+          from: "true",
+          to: "false",
+          metadata: {
+            preference: "operationalCommunicationAllowed",
+            source: "preferencia-do-lead",
+          },
+        }),
+      ]),
+    );
+  });
+
+  it("audits consent status changes and updates marketing eligibility", () => {
+    const repository = createInMemoryCrmRepository({
+      clock: () => new Date("2026-06-18T10:00:00.000Z"),
+    });
+    const contact = repository.createContact({
+      fullName: "Lead revogando consentimento",
+      email: "revoga@example.com",
+    });
+    const consent = repository.createConsent({
+      contactId: contact.id,
+      purpose: "marketing",
+      source: "formulario-blog",
+    });
+
+    const revoked = repository.updateConsentStatus(consent.id, "revoked", {
+      actorId: "dr-vinicius",
+      source: "pedido-whatsapp",
+      decidedAt: "2026-06-18T10:15:00.000Z",
+    });
+
+    expect(revoked).toMatchObject({
+      status: "revoked",
+      source: "pedido-whatsapp",
+      decidedAt: "2026-06-18T10:15:00.000Z",
+      revokedAt: "2026-06-18T10:15:00.000Z",
+    });
+    expect(repository.canSendMarketingCommunication(contact.id)).toBe(false);
+    expect(repository.listAuditLogs()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actorId: "dr-vinicius",
+          action: "consent.status_changed",
+          entityType: "consents",
+          entityId: consent.id,
+          contactId: contact.id,
+          from: "granted",
+          to: "revoked",
+          metadata: {
+            purpose: "marketing",
+            source: "pedido-whatsapp",
+          },
+        }),
+      ]),
+    );
   });
 
   it("moves a lead into a deal and then a contract while preserving attribution and audit", () => {
@@ -389,6 +604,63 @@ describe("CRM lead → deal → contract domain model", () => {
     });
   });
 
+  it("ignores internal site events without referrer before moving attribution to a deal", () => {
+    const repository = createInMemoryCrmRepository({
+      clock: () => new Date("2026-06-18T00:00:00.000Z"),
+    });
+    const { contact, lead, attribution: firstTouch } = createLeadWithAttribution(
+      repository,
+      {
+        contact: {
+          fullName: "Lead com evento interno sem referrer",
+        },
+        attribution: {
+          channel: "ads",
+          campaign: "meta-junho",
+          landingPage: "https://luzperformance.com.br/lp/performance",
+          referrer: "https://instagram.com/luzperformance",
+          utmSource: "meta",
+          utmMedium: "paid_social",
+          utmCampaign: "meta-junho",
+          gbraid: "gbraid-original",
+          wbraid: "wbraid-original",
+        },
+      },
+    );
+
+    const internalEvent = recordAttributionTouch(repository, {
+      contactId: contact.id,
+      attribution: {
+        channel: "blog",
+        landingPage: "https://luzperformance.com.br/blog/artigo-interno",
+      },
+    });
+    const deal = moveLeadToDeal(repository, lead.id, {
+      title: "Acompanhamento com atribuição preservada",
+      stage: "proposal_sent",
+      valueCents: 600000,
+    });
+
+    expect(internalEvent).toEqual(firstTouch);
+    expect(deal.sourceAttributionIds).toEqual([firstTouch.id]);
+    expect(
+      repository.getSourceAttribution(deal.sourceAttributionIds[0]),
+    ).toMatchObject({
+      channel: "ads",
+      campaign: "meta-junho",
+      utmSource: "meta",
+      utmMedium: "paid_social",
+      utmCampaign: "meta-junho",
+      gbraid: "gbraid-original",
+      wbraid: "wbraid-original",
+      latestChannel: "ads",
+      latestGbraid: "gbraid-original",
+      latestWbraid: "wbraid-original",
+      firstTouchAt: "2026-06-18T00:00:00.000Z",
+      lastTouchAt: "2026-06-18T00:00:00.000Z",
+    });
+  });
+
   it("generates renewal work for monthly, semiannual, and annual contract plans", () => {
     const repository = createInMemoryCrmRepository({
       clock: () => new Date("2026-06-18T00:00:00.000Z"),
@@ -550,6 +822,151 @@ describe("CRM lead → deal → contract domain model", () => {
           contactId: contact.id,
           from: "active_care",
           to: "renewal_due",
+        }),
+      ]),
+    );
+  });
+
+  it("groups deals by pipeline stage for the board view", () => {
+    const repository = createInMemoryCrmRepository({
+      clock: () => new Date("2026-06-18T00:00:00.000Z"),
+    });
+    const { lead: firstLead } = createLeadWithAttribution(repository, {
+      contact: {
+        fullName: "Lead em avaliação médica",
+      },
+      attribution: {
+        channel: "blog",
+      },
+    });
+    const { lead: secondLead } = createLeadWithAttribution(repository, {
+      contact: {
+        fullName: "Lead em proposta",
+      },
+      attribution: {
+        channel: "ads",
+      },
+    });
+
+    const reviewDeal = moveLeadToDeal(repository, firstLead.id, {
+      title: "Avaliação médica pendente",
+      stage: "medical_review_pending",
+      valueCents: 600000,
+    });
+    const proposalDeal = moveLeadToDeal(repository, secondLead.id, {
+      title: "Proposta semestral enviada",
+      stage: "proposal_sent",
+      valueCents: 600000,
+    });
+
+    expect(listPipelineDeals(repository)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "medical_review_pending",
+          label: "Avaliação médica pendente",
+          deals: [reviewDeal],
+        }),
+        expect.objectContaining({
+          stage: "proposal_sent",
+          label: "Proposta enviada",
+          deals: [proposalDeal],
+        }),
+      ]),
+    );
+  });
+
+  it("moves a deal through the pipeline and records who, when, from, and to", () => {
+    const repository = createInMemoryCrmRepository({
+      clock: () => new Date("2026-06-18T09:30:00.000Z"),
+    });
+    const { contact, lead } = createLeadWithAttribution(repository, {
+      contact: {
+        fullName: "Lead pronto para proposta",
+      },
+      attribution: {
+        channel: "whatsapp_dm",
+      },
+    });
+    const deal = moveLeadToDeal(repository, lead.id, {
+      title: "Acompanhamento anual",
+      stage: "medical_review_completed",
+      valueCents: 1200000,
+    });
+
+    const movedDeal = moveDealThroughPipeline(repository, {
+      dealId: deal.id,
+      toStage: "proposal_sent",
+      actorId: "dr-vinicius",
+    });
+
+    expect(movedDeal.stage).toBe("proposal_sent");
+    expect(repository.listAuditLogs()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actorId: "dr-vinicius",
+          action: "deal_stage.changed",
+          entityType: "deals",
+          entityId: deal.id,
+          contactId: contact.id,
+          from: "medical_review_completed",
+          to: "proposal_sent",
+          createdAt: "2026-06-18T09:30:00.000Z",
+        }),
+      ]),
+    );
+  });
+
+  it("requires a loss reason when moving a deal to lost/cancelled", () => {
+    const repository = createInMemoryCrmRepository({
+      clock: () => new Date("2026-06-18T09:30:00.000Z"),
+    });
+    const { contact, lead } = createLeadWithAttribution(repository, {
+      contact: {
+        fullName: "Lead que cancelou",
+      },
+      attribution: {
+        channel: "referral",
+      },
+    });
+    const deal = moveLeadToDeal(repository, lead.id, {
+      title: "Contrato mensal",
+      stage: "negotiation",
+      valueCents: 100000,
+    });
+
+    expect(() =>
+      moveDealThroughPipeline(repository, {
+        dealId: deal.id,
+        toStage: "lost",
+        actorId: "dr-vinicius",
+      }),
+    ).toThrow("Moving a deal to lost requires a loss reason");
+
+    const lostDeal = moveDealThroughPipeline(repository, {
+      dealId: deal.id,
+      toStage: "lost",
+      actorId: "dr-vinicius",
+      lossReason: "Optou por não seguir com avaliação comercial agora",
+    });
+
+    expect(lostDeal).toMatchObject({
+      stage: "lost",
+      lossReason: "Optou por não seguir com avaliação comercial agora",
+      lostAt: "2026-06-18T09:30:00.000Z",
+    });
+    expect(repository.listAuditLogs()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actorId: "dr-vinicius",
+          action: "deal_stage.changed",
+          entityType: "deals",
+          entityId: deal.id,
+          contactId: contact.id,
+          from: "negotiation",
+          to: "lost",
+          metadata: {
+            lossReason: "Optou por não seguir com avaliação comercial agora",
+          },
         }),
       ]),
     );

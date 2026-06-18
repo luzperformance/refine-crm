@@ -263,7 +263,8 @@ const isInternalNavigationTouch = (
 
   return (
     isInternalUrl(attribution.landingPage, internalHostnames) &&
-    isInternalUrl(attribution.referrer, internalHostnames)
+    (!attribution.referrer ||
+      isInternalUrl(attribution.referrer, internalHostnames))
   );
 };
 

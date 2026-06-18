@@ -1,6 +1,9 @@
 import type {
   AuditLog,
+  CommunicationPreferences,
   Contact,
+  Consent,
+  ConsentStatus,
   Contract,
   CrmCollectionName,
   CrmEntitiesByCollection,
@@ -17,7 +20,6 @@ import type {
   NewTask,
   SourceAttribution,
   Task,
-  Consent,
 } from "./types";
 
 type CreateInputByCollection = {
@@ -37,6 +39,29 @@ interface RepositoryOptions {
   clock?: () => Date;
   idFactory?: (collection: CrmCollectionName) => string;
 }
+
+interface UpdateDealStageOptions {
+  actorId?: string;
+  lossReason?: string;
+}
+
+interface ConsentStatusChangeOptions {
+  actorId?: string;
+  source?: string;
+  decidedAt?: string;
+}
+
+interface CommunicationPreferenceChangeOptions {
+  actorId?: string;
+  source?: string;
+  changedAt?: string;
+}
+
+const defaultCommunicationPreferences: CommunicationPreferences = {
+  marketingOptOut: false,
+  operationalCommunicationAllowed: true,
+  doNotContact: false,
+};
 
 const collections: CrmCollectionName[] = [
   "contacts",
@@ -77,6 +102,10 @@ export class InMemoryCrmRepository {
     const contact = this.create("contacts", {
       ...input,
       lifecycleStage: input.lifecycleStage ?? "subscriber",
+      communicationPreferences: {
+        ...defaultCommunicationPreferences,
+        ...input.communicationPreferences,
+      },
     });
 
     this.createAuditLog({
@@ -233,27 +262,50 @@ export class InMemoryCrmRepository {
     return this.get("deals", id);
   }
 
-  updateDealStage(id: string, to: Deal["stage"]): Deal {
+  listDeals(): Deal[] {
+    return this.list("deals");
+  }
+
+  updateDealStage(
+    id: string,
+    to: Deal["stage"],
+    options: UpdateDealStageOptions = {},
+  ): Deal {
     const deal = this.getDeal(id);
 
     if (!deal) {
       throw new Error(`Deal not found: ${id}`);
     }
 
+    const lossReason = options.lossReason?.trim();
+
+    if (to === "lost" && !lossReason) {
+      throw new Error("Moving a deal to lost requires a loss reason");
+    }
+
     if (deal.stage === to) {
       return deal;
     }
 
-    const updated = this.update("deals", id, { stage: to });
+    const updated = this.update("deals", id, {
+      stage: to,
+      lossReason: to === "lost" ? lossReason : undefined,
+      lostAt: to === "lost" ? this.now() : undefined,
+    });
 
     this.createAuditLog({
-      actorId: "system",
+      actorId: options.actorId ?? "system",
       action: "deal_stage.changed",
       entityType: "deals",
       entityId: updated.id,
       contactId: updated.contactId,
       from: deal.stage,
       to,
+      metadata: lossReason
+        ? {
+            lossReason,
+          }
+        : undefined,
     });
 
     return updated;
@@ -340,9 +392,17 @@ export class InMemoryCrmRepository {
   }
 
   createConsent(input: NewConsent): Consent {
+    const status = input.status ?? "granted";
+    const decidedAt = input.decidedAt ?? this.now();
     const consent = this.create("consents", {
       ...input,
-      status: input.status ?? "granted",
+      source: input.source ?? "manual",
+      decidedAt,
+      status,
+      grantedAt:
+        status === "granted" ? input.grantedAt ?? decidedAt : input.grantedAt,
+      revokedAt:
+        status === "revoked" ? input.revokedAt ?? decidedAt : input.revokedAt,
     });
 
     this.createAuditLog({
@@ -353,6 +413,7 @@ export class InMemoryCrmRepository {
       contactId: consent.contactId,
       metadata: {
         purpose: consent.purpose,
+        source: consent.source,
         status: consent.status,
       },
     });
@@ -362,6 +423,141 @@ export class InMemoryCrmRepository {
 
   getConsent(id: string): Consent | undefined {
     return this.get("consents", id);
+  }
+
+  listConsentsByContact(contactId: string): Consent[] {
+    return this.listByContact("consents", contactId);
+  }
+
+  updateConsentStatus(
+    id: string,
+    to: ConsentStatus,
+    options: ConsentStatusChangeOptions = {},
+  ): Consent {
+    const consent = this.getConsent(id);
+
+    if (!consent) {
+      throw new Error(`Consent not found: ${id}`);
+    }
+
+    if (consent.status === to) {
+      return consent;
+    }
+
+    const decidedAt = options.decidedAt ?? this.now();
+    const updated = this.update("consents", id, {
+      status: to,
+      source: options.source ?? consent.source,
+      decidedAt,
+      grantedAt: to === "granted" ? decidedAt : consent.grantedAt,
+      revokedAt: to === "revoked" ? decidedAt : consent.revokedAt,
+    });
+
+    this.createAuditLog({
+      actorId: options.actorId ?? "system",
+      action: "consent.status_changed",
+      entityType: "consents",
+      entityId: updated.id,
+      contactId: updated.contactId,
+      from: consent.status,
+      to,
+      metadata: {
+        purpose: updated.purpose,
+        source: updated.source,
+      },
+    });
+
+    return updated;
+  }
+
+  markMarketingOptOut(
+    contactId: string,
+    options: CommunicationPreferenceChangeOptions = {},
+  ): Contact {
+    return this.updateCommunicationPreferences(
+      contactId,
+      {
+        marketingOptOut: true,
+        marketingOptedOutAt: options.changedAt ?? this.now(),
+      },
+      "marketingOptOut",
+      options,
+    );
+  }
+
+  setOperationalCommunicationPermission(
+    contactId: string,
+    allowed: boolean,
+    options: CommunicationPreferenceChangeOptions = {},
+  ): Contact {
+    return this.updateCommunicationPreferences(
+      contactId,
+      {
+        operationalCommunicationAllowed: allowed,
+        operationalCommunicationUpdatedAt: options.changedAt ?? this.now(),
+      },
+      "operationalCommunicationAllowed",
+      options,
+    );
+  }
+
+  markDoNotContact(
+    contactId: string,
+    options: CommunicationPreferenceChangeOptions = {},
+  ): Contact {
+    const changedAt = options.changedAt ?? this.now();
+    const contact = this.updateCommunicationPreferences(
+      contactId,
+      {
+        doNotContact: true,
+        doNotContactAt: changedAt,
+      },
+      "doNotContact",
+      {
+        ...options,
+        changedAt,
+      },
+    );
+
+    if (contact.lifecycleStage === "do_not_contact") {
+      return contact;
+    }
+
+    return this.updateContactLifecycleStage(contactId, "do_not_contact");
+  }
+
+  canSendMarketingCommunication(contactId: string): boolean {
+    const contact = this.getContact(contactId);
+
+    if (!contact) {
+      throw new Error(`Contact not found: ${contactId}`);
+    }
+
+    if (
+      contact.communicationPreferences.marketingOptOut ||
+      contact.communicationPreferences.doNotContact
+    ) {
+      return false;
+    }
+
+    const latestMarketingConsent = this.listConsentsByContact(contactId)
+      .filter((consent) => consent.purpose === "marketing")
+      .sort((left, right) => right.decidedAt.localeCompare(left.decidedAt))[0];
+
+    return latestMarketingConsent?.status === "granted";
+  }
+
+  canSendOperationalCommunication(contactId: string): boolean {
+    const contact = this.getContact(contactId);
+
+    if (!contact) {
+      throw new Error(`Contact not found: ${contactId}`);
+    }
+
+    return (
+      contact.communicationPreferences.operationalCommunicationAllowed &&
+      !contact.communicationPreferences.doNotContact
+    );
   }
 
   createAuditLog(input: NewAuditLog): AuditLog {
@@ -468,6 +664,43 @@ export class InMemoryCrmRepository {
       contactId: updated.id,
       from: contact.lifecycleStage,
       to,
+    });
+
+    return updated;
+  }
+
+  private updateCommunicationPreferences(
+    contactId: string,
+    changes: Partial<CommunicationPreferences>,
+    preference: keyof CommunicationPreferences,
+    options: CommunicationPreferenceChangeOptions,
+  ): Contact {
+    const contact = this.getContact(contactId);
+
+    if (!contact) {
+      throw new Error(`Contact not found: ${contactId}`);
+    }
+
+    const before = contact.communicationPreferences[preference];
+    const updated = this.update("contacts", contactId, {
+      communicationPreferences: {
+        ...contact.communicationPreferences,
+        ...changes,
+      },
+    });
+
+    this.createAuditLog({
+      actorId: options.actorId ?? "system",
+      action: "communication_preferences.changed",
+      entityType: "contacts",
+      entityId: updated.id,
+      contactId: updated.id,
+      from: String(before),
+      to: String(updated.communicationPreferences[preference]),
+      metadata: {
+        preference,
+        source: options.source ?? "manual",
+      },
     });
 
     return updated;

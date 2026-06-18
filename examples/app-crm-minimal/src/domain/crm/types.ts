@@ -50,6 +50,17 @@ export type TaskStatus = "open" | "done" | "cancelled";
 
 export type ConsentStatus = "granted" | "revoked" | "expired";
 
+export type ConsentPurpose = "marketing" | "operational_communication";
+
+export interface CommunicationPreferences {
+  marketingOptOut: boolean;
+  marketingOptedOutAt?: string;
+  operationalCommunicationAllowed: boolean;
+  operationalCommunicationUpdatedAt?: string;
+  doNotContact: boolean;
+  doNotContactAt?: string;
+}
+
 export type AttributionChannel =
   | "blog"
   | "ads"
@@ -67,6 +78,8 @@ export type AuditAction =
   | "contract.created"
   | "task.created"
   | "consent.created"
+  | "consent.status_changed"
+  | "communication_preferences.changed"
   | "source_attribution.created"
   | "source_attribution.latest_touch_updated"
   | "lifecycle_stage.changed"
@@ -94,6 +107,7 @@ export interface Contact extends CrmEntity {
   email?: string;
   phone?: string;
   lifecycleStage: LifecycleStage;
+  communicationPreferences: CommunicationPreferences;
   ownerId?: string;
 }
 
@@ -146,6 +160,8 @@ export interface Deal extends CrmEntity {
   title: string;
   valueCents?: number;
   expectedCloseDate?: string;
+  lossReason?: string;
+  lostAt?: string;
 }
 
 export interface Contract extends CrmEntity {
@@ -173,7 +189,9 @@ export interface Task extends CrmEntity {
 
 export interface Consent extends CrmEntity {
   contactId: string;
-  purpose: string;
+  purpose: ConsentPurpose;
+  source: string;
+  decidedAt: string;
   status: ConsentStatus;
   grantedAt?: string;
   revokedAt?: string;
@@ -201,8 +219,12 @@ export interface CrmEntitiesByCollection {
   auditLogs: AuditLog;
 }
 
-export type NewContact = Omit<Contact, keyof CrmEntity> & {
+export type NewContact = Omit<
+  Contact,
+  keyof CrmEntity | "communicationPreferences"
+> & {
   lifecycleStage?: LifecycleStage;
+  communicationPreferences?: Partial<CommunicationPreferences>;
 };
 
 export type NewSourceAttribution = Omit<
@@ -235,8 +257,13 @@ export type NewTask = Omit<Task, keyof CrmEntity | "status"> & {
   status?: TaskStatus;
 };
 
-export type NewConsent = Omit<Consent, keyof CrmEntity | "status"> & {
+export type NewConsent = Omit<
+  Consent,
+  keyof CrmEntity | "status" | "source" | "decidedAt"
+> & {
   status?: ConsentStatus;
+  source?: string;
+  decidedAt?: string;
 };
 
 export type NewAuditLog = Omit<AuditLog, keyof CrmEntity>;
