@@ -25,6 +25,7 @@ import {
   createLeadWithAttribution,
   dealStageLabels,
   dealStages,
+  evaluateMedicalGovernancePolicy,
   listPipelineDeals,
   moveDealThroughPipeline,
   moveLeadToDeal,
@@ -79,6 +80,8 @@ const buildDemoPipelineRepository = () => {
     title: "Avaliação inicial + acompanhamento semestral",
     stage: "medical_review_pending",
     valueCents: 600000,
+    interest:
+      "Lead relatou sintomas e exames; exige revisão médica antes de orientar ou exportar.",
   });
   seedDeal(repository, {
     fullName: "Lead Ads — performance responsável",
@@ -109,6 +112,7 @@ const seedDeal = (
     title: string;
     stage: DealStage;
     valueCents: number;
+    interest?: string;
   },
 ) => {
   const { lead } = createLeadWithAttribution(repository, {
@@ -121,7 +125,9 @@ const seedDeal = (
     },
     lead: {
       lifecycleStage: "sql",
-      interest: "Consulta comercial com fronteira médica e redução de danos",
+      interest:
+        input.interest ??
+        "Consulta comercial com fronteira médica e redução de danos",
     },
   });
 
@@ -353,46 +359,58 @@ export const CrmPipelinePage = () => {
                   <Text style={{ color: "#a0a0a0" }}>Sem deals neste estágio</Text>
                 ) : null}
 
-                {group.deals.map((deal) => (
-                  <Card
-                    key={deal.id}
-                    size="small"
-                    style={{
-                      border: "1px solid rgba(201, 164, 74, 0.18)",
-                      borderRadius: 14,
-                      background: "rgba(20, 42, 66, 0.92)",
-                    }}
-                  >
-                    <Space direction="vertical" size={10} style={{ width: "100%" }}>
-                      <Text strong style={{ color: "#ffffff" }}>
-                        {deal.title}
-                      </Text>
-                      <Text style={{ color: "#a0a0a0" }}>
-                        R$ {((deal.valueCents ?? 0) / 100).toLocaleString("pt-BR")}
-                      </Text>
-                      <Select<DealStage>
-                        aria-label={`Mover ${deal.title}`}
-                        value={deal.stage}
-                        options={dealStages.map((stage) => ({
-                          value: stage,
-                          label: dealStageLabels[stage],
-                        }))}
-                        onChange={(stage) => handleMoveDeal(deal.id, stage)}
-                      />
-                      <Input
-                        aria-label={`Motivo de perda de ${deal.title}`}
-                        placeholder="Motivo obrigatório se mover para perdido/cancelado"
-                        value={lossReasons[deal.id] ?? ""}
-                        onChange={(event) =>
-                          setLossReasons((current) => ({
-                            ...current,
-                            [deal.id]: event.target.value,
-                          }))
-                        }
-                      />
-                    </Space>
-                  </Card>
-                ))}
+                {group.deals.map((deal) => {
+                  const lead = repository.getLead(deal.leadId);
+                  const medicalGovernance = evaluateMedicalGovernancePolicy({
+                    content: [deal.title, lead?.interest ?? ""],
+                  });
+
+                  return (
+                    <Card
+                      key={deal.id}
+                      size="small"
+                      style={{
+                        border: "1px solid rgba(201, 164, 74, 0.18)",
+                        borderRadius: 14,
+                        background: "rgba(20, 42, 66, 0.92)",
+                      }}
+                    >
+                      <Space direction="vertical" size={10} style={{ width: "100%" }}>
+                        <Text strong style={{ color: "#ffffff" }}>
+                          {deal.title}
+                        </Text>
+                        {medicalGovernance.requiresMedicalReview ? (
+                          <Tag color="red">Revisão médica obrigatória</Tag>
+                        ) : (
+                          <Tag color="green">Revisão médica não exigida</Tag>
+                        )}
+                        <Text style={{ color: "#a0a0a0" }}>
+                          R$ {((deal.valueCents ?? 0) / 100).toLocaleString("pt-BR")}
+                        </Text>
+                        <Select<DealStage>
+                          aria-label={`Mover ${deal.title}`}
+                          value={deal.stage}
+                          options={dealStages.map((stage) => ({
+                            value: stage,
+                            label: dealStageLabels[stage],
+                          }))}
+                          onChange={(stage) => handleMoveDeal(deal.id, stage)}
+                        />
+                        <Input
+                          aria-label={`Motivo de perda de ${deal.title}`}
+                          placeholder="Motivo obrigatório se mover para perdido/cancelado"
+                          value={lossReasons[deal.id] ?? ""}
+                          onChange={(event) =>
+                            setLossReasons((current) => ({
+                              ...current,
+                              [deal.id]: event.target.value,
+                            }))
+                          }
+                        />
+                      </Space>
+                    </Card>
+                  );
+                })}
               </Space>
             </Card>
           </Col>

@@ -11,6 +11,8 @@ Este diretório é o ponto canônico local para o sub-repositório oficial do CR
 ## Local do repo
 
 - Caminho no workspace: `work/projects/CRM/`
+- Repositório GitHub oficial: `https://github.com/luzperformance/luzperformance-crm`
+- Remote local (`origin`): `https://github.com/luzperformance/luzperformance-crm.git`
 - Canal operacional: grupo Telegram `CRM` (`telegram:-5353082763`)
 - Função: desenvolvimento do CRM/funil da LuzPerformance.
 

@@ -1,4 +1,5 @@
 import type { InMemoryCrmRepository } from "./in-memory-crm-repository";
+import { evaluateMedicalGovernancePolicy } from "./medical-governance-policy";
 import type {
   AuditAction,
   AuditLog,
@@ -21,6 +22,7 @@ export type AdsExportBlockedReason =
   | "do_not_contact"
   | "missing_contact"
   | "missing_allowed_identifier"
+  | "medical_review_required"
   | "sensitive_metadata_present";
 
 export interface AdsConversionSourceRef {
@@ -133,9 +135,33 @@ const buildExportEvent = (
     };
   }
 
+  if (
+    evaluateMedicalGovernancePolicy({
+      auditLog: candidate.auditLog,
+      metadata: candidate.auditLog.metadata,
+    }).adsExportBlocked
+  ) {
+    return {
+      status: "ads_export_blocked",
+      reason: "medical_review_required",
+      source,
+    };
+  }
+
   const contact = source.contactId
     ? repository.getContact(source.contactId)
     : undefined;
+
+  if (
+    source.contactId &&
+    hasMedicalReviewBoundaryForContact(repository, source.contactId)
+  ) {
+    return {
+      status: "ads_export_blocked",
+      reason: "medical_review_required",
+      source,
+    };
+  }
 
   if (!contact) {
     return {
@@ -381,6 +407,21 @@ const normalizeBrazilPhoneToE164 = (
     : `55${withoutInternationalPrefix}`;
 
   return `+${withBrazilCountryCode}`;
+};
+
+const hasMedicalReviewBoundaryForContact = (
+  repository: InMemoryCrmRepository,
+  contactId: string,
+): boolean => {
+  return repository.listAuditLogs().some((auditLog) => {
+    return (
+      auditLog.contactId === contactId &&
+      evaluateMedicalGovernancePolicy({
+        auditLog,
+        metadata: auditLog.metadata,
+      }).adsExportBlocked
+    );
+  });
 };
 
 const hasSensitiveMetadata = (metadata: AuditLog["metadata"]): boolean => {

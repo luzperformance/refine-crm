@@ -2,7 +2,7 @@
 
 ## Domínio
 
-Este repo transforma o `refine-crm` em um CRM médico-operacional para a LuzPerformance: funil, relacionamento, contratos, follow-ups, renovações, atribuição de marketing e governança LGPD.
+Este repo oficial é `luzperformance/luzperformance-crm`, derivado do `refine-crm`, e transforma a base em um CRM médico-operacional para a LuzPerformance: funil, relacionamento, contratos, follow-ups, renovações, atribuição de marketing e governança LGPD.
 
 O sistema não é prontuário, não é motor de decisão clínica e não substitui avaliação médica.
 

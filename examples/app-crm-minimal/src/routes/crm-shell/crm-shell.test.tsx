@@ -63,6 +63,7 @@ describe("CRM product shell", () => {
     expect(html).toContain("Deals agrupados por estágio");
     expect(html).toContain("Criar lead/deal");
     expect(html).toContain("Avaliação médica pendente");
+    expect(html).toContain("Revisão médica obrigatória");
     expect(html).toContain("Histórico de transições");
     expect(html).toContain("Motivo obrigatório se mover para perdido/cancelado");
   });

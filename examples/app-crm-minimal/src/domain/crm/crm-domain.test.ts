@@ -7,6 +7,7 @@ import {
   createInMemoryCrmRepository,
   createLeadWithAttribution,
   dealStages,
+  evaluateMedicalGovernancePolicy,
   lifecycleStages,
   listPipelineDeals,
   markContractsDueForRenewal,
@@ -927,6 +928,122 @@ describe("CRM lead → deal → contract domain model", () => {
     expect(JSON.stringify(exportableEvents)).not.toContain("symptoms");
     expect(JSON.stringify(exportableEvents)).not.toContain("hormones");
     expect(JSON.stringify(exportableEvents)).not.toContain("diagnosis");
+  });
+
+  it("flags health-sensitive CRM content for medical review and Ads blocking", () => {
+    const policy = evaluateMedicalGovernancePolicy({
+      content: [
+        "Lead relatou sintomas, trouxe exames e perguntou sobre dose de testosterona.",
+        "Também citou efeito colateral e possível evento adverso.",
+      ],
+    });
+
+    expect(policy).toMatchObject({
+      containsHealthSensitiveData: true,
+      requiresMedicalReview: true,
+      adsExportBlocked: true,
+      reviewStatus: "medical_review_required",
+    });
+    expect(policy.flags).toEqual([
+      "contains_health_sensitive_data",
+      "requires_medical_review",
+      "ads_export_blocked",
+    ]);
+    expect(policy.matchedCategories).toEqual(
+      expect.arrayContaining([
+        "symptoms",
+        "exams",
+        "hormones",
+        "dose",
+        "side_effects",
+        "adverse_events",
+      ]),
+    );
+  });
+
+  it("stores review-required governance flags without copying raw clinical interest", () => {
+    const repository = createInMemoryCrmRepository({
+      clock: () => new Date("2026-06-18T12:00:00.000Z"),
+    });
+    const sensitiveInterest =
+      "Paciente perguntou sobre sintomas, exames e dose de testosterona";
+
+    const { lead } = createLeadWithAttribution(repository, {
+      contact: {
+        fullName: "Lead com conteúdo sensível",
+        email: "governance@example.com",
+      },
+      attribution: {
+        channel: "ads",
+        gclid: "gclid-review-required",
+      },
+      lead: {
+        lifecycleStage: "sql",
+        interest: sensitiveInterest,
+      },
+    });
+
+    const leadCreatedAuditLog = repository
+      .listAuditLogs()
+      .find(
+        (log) => log.action === "lead.created" && log.entityId === lead.id,
+      );
+
+    expect(leadCreatedAuditLog?.metadata).toMatchObject({
+      containsHealthSensitiveData: true,
+      requiresMedicalReview: true,
+      adsExportBlocked: true,
+    });
+    expect(leadCreatedAuditLog?.metadata?.sensitiveTopicCategories).toContain(
+      "symptoms",
+    );
+    expect(JSON.stringify(leadCreatedAuditLog)).not.toContain(sensitiveInterest);
+  });
+
+  it("blocks Ads export when CRM content requires medical review", () => {
+    const repository = createInMemoryCrmRepository({
+      clock: () => new Date("2026-06-18T12:00:00.000Z"),
+    });
+    const { contact } = createLeadWithAttribution(repository, {
+      contact: {
+        fullName: "Lead review boundary",
+        email: "review-boundary@example.com",
+      },
+      attribution: {
+        channel: "ads",
+        gclid: "gclid-review-boundary",
+      },
+      lead: {
+        lifecycleStage: "sql",
+        interest:
+          "Lead pediu análise de exames, sintomas e dose antes de fechar.",
+      },
+    });
+    repository.createConsent({
+      contactId: contact.id,
+      purpose: "marketing",
+      source: "landing-page-lgpd-checkbox",
+    });
+
+    const events = buildAdsConversionExportBoundary(repository);
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "ads_export_blocked",
+          reason: "medical_review_required",
+          source: expect.objectContaining({
+            contactId: contact.id,
+          }),
+        }),
+      ]),
+    );
+    expect(
+      events.some(
+        (event) =>
+          event.status === "exportable" && event.source.contactId === contact.id,
+      ),
+    ).toBe(false);
   });
 
   it("marks Ads exports as blocked when governance or sensitive metadata forbids export", () => {

@@ -1,3 +1,4 @@
+import { buildMedicalGovernanceAuditMetadata } from "./medical-governance-policy";
 import type {
   AuditLog,
   CommunicationPreferences,
@@ -224,6 +225,7 @@ export class InMemoryCrmRepository {
       contactId: lead.contactId,
       metadata: {
         lifecycleStage: lead.lifecycleStage,
+        ...buildMedicalGovernanceAuditMetadata({ content: lead.interest }),
       },
     });
 
@@ -252,6 +254,7 @@ export class InMemoryCrmRepository {
       metadata: {
         leadId: deal.leadId,
         stage: deal.stage,
+        ...buildMedicalGovernanceAuditMetadata({ content: deal.title }),
       },
     });
 
@@ -561,7 +564,20 @@ export class InMemoryCrmRepository {
   }
 
   createAuditLog(input: NewAuditLog): AuditLog {
-    return this.create("auditLogs", input);
+    const medicalGovernanceMetadata = buildMedicalGovernanceAuditMetadata({
+      metadata: input.metadata,
+    });
+
+    return this.create("auditLogs", {
+      ...input,
+      metadata:
+        input.metadata || Object.keys(medicalGovernanceMetadata).length > 0
+          ? {
+              ...input.metadata,
+              ...medicalGovernanceMetadata,
+            }
+          : undefined,
+    });
   }
 
   getAuditLog(id: string): AuditLog | undefined {
