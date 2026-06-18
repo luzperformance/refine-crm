@@ -1,39 +1,79 @@
 import type { IResourceItem } from "@refinedev/core";
 
 import {
+  ApartmentOutlined,
+  CheckSquareOutlined,
+  ContactsOutlined,
   DashboardOutlined,
-  ProjectOutlined,
-  ShopOutlined,
+  FileProtectOutlined,
+  LineChartOutlined,
+  ReadOutlined,
+  SafetyCertificateOutlined,
 } from "@ant-design/icons";
 
 export const resources: IResourceItem[] = [
   {
-    name: "dashboard",
+    name: "dashboards",
     list: "/",
     meta: {
-      label: "Dashboard",
+      label: "Dashboards",
       icon: <DashboardOutlined />,
     },
   },
   {
-    name: "companies",
-    list: "/companies",
-    show: "/companies/:id",
-    create: "/companies/new",
-    edit: "/companies/edit/:id",
+    name: "leads",
+    list: "/leads",
     meta: {
-      label: "Companies",
-      icon: <ShopOutlined />,
+      label: "Leads",
+      icon: <ContactsOutlined />,
+    },
+  },
+  {
+    name: "pipeline",
+    list: "/pipeline",
+    meta: {
+      label: "Pipeline",
+      icon: <ApartmentOutlined />,
+    },
+  },
+  {
+    name: "contracts",
+    list: "/contracts",
+    meta: {
+      label: "Contracts",
+      icon: <FileProtectOutlined />,
     },
   },
   {
     name: "tasks",
     list: "/tasks",
-    create: "/tasks/new",
-    edit: "/tasks/edit/:id",
     meta: {
       label: "Tasks",
-      icon: <ProjectOutlined />,
+      icon: <CheckSquareOutlined />,
+    },
+  },
+  {
+    name: "blog-attribution",
+    list: "/attribution/blog",
+    meta: {
+      label: "Blog Attribution",
+      icon: <ReadOutlined />,
+    },
+  },
+  {
+    name: "ads-attribution",
+    list: "/attribution/ads",
+    meta: {
+      label: "Ads Attribution",
+      icon: <LineChartOutlined />,
+    },
+  },
+  {
+    name: "compliance",
+    list: "/compliance",
+    meta: {
+      label: "Compliance",
+      icon: <SafetyCertificateOutlined />,
     },
   },
 ];
